@@ -1,0 +1,11 @@
+services:
+  web:
+    build: .
+    ports:
+      # Map container port 5000 to a host port. Set HOST_PORT environment variable to override (e.g. HOST_PORT=5001).
+      - "${HOST_PORT:-5050}:5000"
+    volumes:
+      - .:/app
+    environment:
+      - FLASK_ENV=development
+    command: python app.py

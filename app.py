@@ -1,14 +1,48 @@
 from flask import Flask, render_template, jsonify, request
 import math
+import os
 import random
 import logging
 import requests
+import psycopg2
 from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+
+def get_db():
+    conn = psycopg2.connect(DATABASE_URL)
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS rankings (
+            id SERIAL PRIMARY KEY,
+            nickname VARCHAR(20) NOT NULL,
+            score INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+    logger.info("[DB] rankings table ready")
+
+
+with app.app_context():
+    if DATABASE_URL:
+        try:
+            init_db()
+        except Exception as e:
+            logger.error(f"[DB] Init failed: {e}")
 
 # 기존 파노라마 샘플 (백업/예제용)
 PANORAMAS = [
@@ -186,6 +220,46 @@ def guess():
             "hint": pano.get("hint", ""),
         }
     )
+
+
+@app.route("/api/ranking", methods=["GET"])
+def get_ranking():
+    """상위 10명 랭킹 조회"""
+    if not DATABASE_URL:
+        return jsonify([])
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT nickname, score, created_at FROM rankings ORDER BY score DESC LIMIT 10"
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return jsonify(
+        [{"nickname": r[0], "score": r[1], "created_at": r[2].isoformat()} for r in rows]
+    )
+
+
+@app.route("/api/ranking", methods=["POST"])
+def post_ranking():
+    """점수 등록"""
+    if not DATABASE_URL:
+        return jsonify({"error": "DB not configured"}), 500
+    data = request.json
+    nickname = data.get("nickname", "").strip()[:20]
+    score = data.get("score", 0)
+    if not nickname or not isinstance(score, int):
+        return jsonify({"error": "invalid data"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO rankings (nickname, score) VALUES (%s, %s)", (nickname, score)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
